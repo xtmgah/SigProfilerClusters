@@ -25,6 +25,7 @@ import bisect
 from scipy.signal import find_peaks
 import random
 import multiprocessing as mp
+import contextlib
 import seaborn as sns
 # from collections import Iterable
 from itertools import chain
@@ -33,6 +34,16 @@ import sys
 
 warnings.filterwarnings("ignore", message="invalid value encountered in long_scalars")
 warnings.filterwarnings("ignore", message="Data has no positive values, and therefore cannot be log-scaled.")
+
+# Pool workers append to the same _clustered/_nonClustered files; without this their lines interleave.
+_write_lock = None
+
+def _init_write_lock(lock):
+	global _write_lock
+	_write_lock = lock
+
+def _append_lock():
+	return _write_lock if _write_lock is not None else contextlib.nullcontext()
 
 def z_test (x, mu, sigma):
 	'''
@@ -435,7 +446,7 @@ def first_run (distances, distances_orig_all, distances_orig, vcf_path_clust, vc
 
 
 	if not correctionData:
-		with open(vcf_path_clust + project + "_clustered.txt", 'a') as clust:
+		with _append_lock(), open(vcf_path_clust + project + "_clustered.txt", 'a') as clust:
 			for muts in clustered_muts:
 				sample = muts[0]
 				chrom = muts[1]
@@ -450,7 +461,7 @@ def first_run (distances, distances_orig_all, distances_orig, vcf_path_clust, vc
 				else:
 					print("\t".join([project,sample,".",genome,"SNP",chrom,pos,pos,ref,alt,"SOMATIC", plotIMD, imd_recorded]),file=clust)
 
-		with open(vcf_path_nonClust + project + "_nonClustered.txt", 'a') as nonclust:
+		with _append_lock(), open(vcf_path_nonClust + project + "_nonClustered.txt", 'a') as nonclust:
 			for muts in nonClustered_muts:
 				sample = muts[0]
 				chrom = muts[1]
@@ -1036,7 +1047,7 @@ def hotSpotAnalysis (project, genome, contexts, simContext, ref_dir, windowSize,
 			max_seed = numSamples
 		else:
 			max_seed = processors
-		pool = mp.Pool(max_seed)
+		pool = mp.Pool(max_seed, initializer=_init_write_lock, initargs=(mp.Lock(),))
 		samples_parallel = [[] for i in range(max_seed)]
 		pool_bin = 0
 		for file in folders:
